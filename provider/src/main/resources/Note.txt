@@ -1,0 +1,399 @@
+skoda-server.p12 - certificate which this application share with postman as consumer
+truststore where certificate of consumer is added
+
+Postman Consumer --> localhost:8443 Provider
+https://localhost:8443/hello
+
+-----
+
+Step 1 — Create the Root CA Private Key
+
+Opne cmd and then: use git bash if on windows :
+
+openssl genrsa -out SkodaCA.key 2048
+you will get
+SkodaCA.key
+
+Skoda Root CA
+        │
+        └── SkodaCA.key
+             (Private Key)
+
+Step 2 — Create the Root CA Certificate
+
+openssl req -x509 \
+-new \
+-key SkodaCA.key \
+-sha256 \
+-days 3650 \
+-out SkodaCA.crt
+
+Ye interactive questions puchega.
+
+Example:
+
+Country Name (2 letter code): IN
+State or Province Name: Rajasthan
+Locality Name: Jaipur
+Organization Name: Skoda
+Organizational Unit Name: Security
+Common Name: SkodaRootCA
+Email Address: av.com
+
+waha bs Common Name (CN): SkodaRootCA
+
+-->
+Kya generate hoga?
+SkodaCA.key
+SkodaCA.crt --> is he file ka use ker k ye apneko ek signed cert dega == joh hum apne end s ek file CSR bhejege.
+
+
+Verify the Root CA Certificate
+Check these fields:
+
+Issuer:
+    CN = SkodaRootCA
+
+Subject:
+    CN = SkodaRootCA
+
+
+ SkodaRootCA
+      │
+      │ signs
+      ▼
+ SkodaRootCA Certificate
+
+
+ Issuer = SkodaRootCA
+ Subject = SkodaRootCA
+
+Skoda/
+├── SkodaCA.key      🔒 Root CA Private Key
+└── SkodaCA.crt      📜 Root CA Certificate
+
+
+ J s DigiCert CA h v s ye local cert banay hai.
+ =====================================================
+
+
+Step 2 — Generate Server Private Key
+Command:
+
+openssl genrsa -out skoda-server.key 2048
+
+Generated:
+
+skoda-server.key
+
+---
+
+Isme kya hai?
+
+Ye server ki private key hai.
+
+Isko sirf server ke paas rehna chahiye.
+
+Skoda Server
+
+Private Key
+
+↓
+
+skoda-server.key
+
+
+Step 3 — Create localhost.cnf
+
+Ye file SAN (Subject Alternative Name) ke liye hai.
+
+Create:
+
+localhost.cnf bano local machine m
+
+Content:
+
+[req]
+default_bits = 2048
+prompt = no
+default_md = sha256
+distinguished_name = dn
+req_extensions = req_ext
+
+[dn]
+CN = localhost
+
+[req_ext]
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = localhost
+IP.1 = 127.0.0.1
+Ye file kyun?
+
+Aaj ke browsers aur Postman CN ko ignore karte hain.
+
+Wo SAN check karte hain.
+
+Without SAN:
+
+SSL Error:
+
+Hostname/IP does not match certificate's altnames
+
+With SAN:
+
+localhost
+
+↓
+
+Certificate SAN
+
+↓
+
+localhost
+
+↓
+
+Handshake Success
+Step 4 — Generate CSR
+
+Command:
+
+openssl req \
+-new \
+-key skoda-server.key \
+-out skoda-server.csr \
+-config localhost.cnf
+
+Generated:
+
+skoda-server.csr
+CSR me kya hota hai?
+
+CSR = Certificate Signing Request
+
+Isme hota hai:
+
+Server Public Key
+CN = localhost
+SAN = localhost
+Organization details
+
+Private key (skoda-server.key) CSR me nahi hoti.
+
+Flow
+skoda-server.key
+        │
+        │
+        ▼
+Generate CSR
+        │
+        ▼
+skoda-server.csr
+
+Ye file ab Skoda CA ko sign karne ke liye di jayegi.
+
+
+--------------------
+Folder ab tak
+Skoda/
+│
+├── SkodaCA.key --> Private key h
+├── SkodaCA.crt --> certificate h
+│
+├── skoda-server.key  --> Private key h
+├── localhost.cnf
+└── skoda-server.csr
+
+🛑 Yahin rukte hain.
+Jab skoda-server.csr ban jaye, tab next step me hum CA se is CSR ko sign karke skoda-server.crt banayenge,
+aur main detail me bataunga ki signing ke time exactly kya hota hai aur SkodaCA.key ka role kya hai.
+
+Skoda/
+│
+├── SkodaCA.key          ✅ Root CA Private Key
+├── SkodaCA.crt          ✅ Root CA Certificate
+├── skoda-server.key     ✅ Server Private Key
+├── localhost.cnf        ✅ SAN Configuration
+└── skoda-server.csr     ✅ Certificate Signing Request
+
+Step 5 — Sign the CSR
+
+Yahan tum CA ban ke act kar rahe ho.
+
+Command:
+
+openssl x509 \
+-req \
+-in skoda-server.csr \
+-CA SkodaCA.crt \
+-CAkey SkodaCA.key \
+-CAcreateserial \
+-out skoda-server.crt \
+-days 365 \
+-sha256 \
+-extfile localhost.cnf \
+-extensions req_ext
+
+----
+
+Skoda/
+│
+├── SkodaCA.key
+├── SkodaCA.crt
+├── SkodaCA.srl
+│
+├── skoda-server.key
+├── localhost.cnf
+├── skoda-server.csr
+└── skoda-server.crt
+
+
+Step 6 — Verify the Certificate
+openssl x509 -in skoda-server.crt -text -noout
+
+                   Skoda Root CA
+
+          SkodaCA.key      SkodaCA.crt
+                 │               │
+                 │ Sign CSR      │
+                 └──────┬────────┘
+                        │
+                        ▼
+                skoda-server.csr
+                        │
+                        ▼
+                skoda-server.crt
+
+------------------------------------------------------------------------
+Step 7 — Create PKCS12 Keystore
+
+Spring Boot directly .key aur .crt use nahi karta.
+
+Usko ek PKCS12 Keystore (.p12) chahiye.
+
+Run:
+
+openssl pkcs12 \
+-export \
+-out skoda-server.p12 \
+-inkey skoda-server.key \
+-in skoda-server.crt \
+-certfile SkodaCA.crt \
+-name server \
+-password pass:password
+
+
+Is file ke andar kya hai?
+skoda-server.p12
+
+│
+├── Private Key
+│
+├── Server Certificate
+│
+└── Root CA Certificate
+
+
+Ek hi file me sab pack ho gaya.
+
+Isi ko kehte hain Keystore.
+
+
+Step 8 — Verify Keystore
+
+Run:
+
+keytool -list -v \
+-keystore skoda-server.p12 \
+-storetype PKCS12 \
+-storepass password
+
+====================================
+====================================================================
+
+
+
+Skoda/
+
+├── SkodaCA.key
+├── SkodaCA.crt
+├── SkodaCA.srl
+
+├── localhost.cnf
+
+├── skoda-server.key
+├── skoda-server.csr
+├── skoda-server.crt
+
+└── skoda-server.p12
+
+-------------------------------
+
+
+Step 9 — Create Truststore
+
+Truststore ka purpose:
+
+Main kin Certificates / CAs par trust karta hu?
+
+Create truststore.p12
+
+Run:
+
+keytool \
+-importcert \
+-alias skoda-ca \
+-file SkodaCA.crt \
+-keystore truststore.p12 \
+-storetype PKCS12 \
+-storepass password \
+-noprompt
+
+--------------
+
+Verify Truststore
+
+Run:
+
+keytool -list -v \
+-keystore truststore.p12 \
+-storetype PKCS12 \
+-storepass password
+
+============================================================
+File	Contains
+skoda-server.p12	Private Key + Server Certificate
+truststore.p12	Trusted CA Certificates
+
+
+Skoda/
+
+├── SkodaCA.key
+├── SkodaCA.crt
+├── SkodaCA.srl
+
+├── localhost.cnf
+
+├── skoda-server.key
+├── skoda-server.csr
+├── skoda-server.crt
+
+├── skoda-server.p12
+└── truststore.p12
+
+================================================
+Spring Boot Configuration
+
+server.ssl.key-store=classpath:skoda-server.p12
+server.ssl.key-store-password=password
+server.ssl.key-store-type=PKCS12
+server.ssl.key-alias=server
+
+server.ssl.trust-store=classpath:truststore.p12
+server.ssl.trust-store-password=password
+server.ssl.trust-store-type=PKCS12
+
+=================================================
+
